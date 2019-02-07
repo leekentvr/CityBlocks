@@ -1,0 +1,332 @@
+from PIL import Image, ImageTk
+import tkinter as tk
+import time
+import cv2
+import numpy as np
+from operator import itemgetter
+import csv
+from scipy import spatial
+import tkinter.ttk
+
+PINK_LOW = 140
+PINK_HIGH = 190
+
+# BRICK COLOURS
+RED_LOW = 00
+RED_HIGH = 12
+YELLOW_LOW = 13
+YELLOW_HIGH = 28
+GREEN_LOW = 30
+GREEN_HIGH = 50
+DARKGREENLOW = 80
+DARKGREENHIGH = 99
+BLUE_LOW = 102
+BLUE_HIGH = 117
+PURPLE_LOW = 118
+PURPLE_HIGH = 145
+
+# Creates an empty list 2D array
+listWidth, listHeight = 8, 8;
+thisCSVSnapshot = [[0 for x in range(listWidth)] for y in range(listHeight)]
+
+showLines = False
+
+
+def line(pointa, pointb):
+    Ais = (pointa[1] - pointb[1])
+    Bis = (pointb[0] - pointa[0])
+    Cis = (pointa[0] * pointb[1] - pointb[0] * pointa[1])
+    return Ais, Bis, -Cis
+
+
+# check if two lines intersect
+def intersects(line1, line2):
+    Dis = line1[0] * line2[1] - line1[1] * line2[0]
+    Dxis = line1[2] * line2[1] - line1[1] * line2[2]
+    Dyis = line1[0] * line2[2] - line1[2] * line2[0]
+    if Dis != 0:
+        xis = Dxis / Dis
+        yis = Dyis / Dis
+        return xis, yis
+    else:
+        return False
+
+
+class Application:
+    def __init__(self):
+        self.vs = cv2.VideoCapture(1)  # capture video
+        self.output_path = "D:\Perforce\CityBlocks\CityBlock\CityData\csvFile" + str(int(time.time())) + ".csv"
+        self.current_image = None  # current image from the camera
+        self.showLines = False
+        self.root = tk.Tk()  # initialize root window
+        self.root.title("Lego Scanner")
+        self.pinkSliderVal = 0.0
+        self.colourSliderVal = 0.0
+        self.imgGlobal = None
+
+        self.style = tk.ttk.Style()
+        #self.style.theme_use('clam')
+
+        # self.destructor function gets fired when the window is closed
+        self.root.protocol('WM_DELETE_WINDOW', self.destructor)
+        self.panel = tkinter.ttk.Label(self.root)
+
+        # self.panel = tk.Label(self.root,style='mytheme')  # initialize image panel
+        self.panel.grid(padx=10, pady=20, columnspan=3)
+
+        # create a button, that when pressed, will take the current frame and save it to file
+        self.btn = tk.ttk.Button(self.root, text="Snapshot!", command=self.take_snapshot, width=60)
+        self.btn.grid(row=3, column=0,columnspan=3, padx=10, pady=30)
+
+        self.cButton = tk.ttk.Checkbutton(self.root, text="Show Lines", variable=showLines, command=self.showLinesChanged)
+        self.cButton.grid(row=4, column=1, padx=10, pady=10, rowspan=2)
+
+
+        s1label = tk.ttk.Label(self.root, text="Pink offset",font=("TkDefaultFont", 12))
+        s1label.grid(row=4, column=0, padx=10, pady=10)
+
+        slider1 = tk.ttk.Scale(self.root, from_=-10, to=10, orient='horizontal', command=self.setPinkScale)
+        slider1.grid(row=5, column=0, padx=10, pady=10)
+
+        s2label = tk.ttk.Label(self.root, text="Colour offset",font=("TkDefaultFont", 12))
+        s2label.grid(row=4, column=2, padx=10, pady=10)
+
+        slider2 = tk.ttk.Scale(self.root, from_=-10, to=10, orient='horizontal', command=self.setColourScale)
+        slider2.grid(row=5, column=2, padx=10, pady=10)
+
+        self.CityName = tk.StringVar()
+        self.citylabel = tk.ttk.Label(self.root, text="Name of City",font=("TkDefaultFont", 18))
+        self.citylabel.grid(row=1, columnspan=2, padx=20, pady=10)
+
+        self.cityNameEntry = tk.ttk.Entry(self.root,justify="center", width=35,font=("TkDefaultFont", 18), textvariable=self.CityName)
+        self.cityNameEntry.grid(row=2,columnspan=2,pady=0,padx=10)
+
+        self.IDlabel = tk.ttk.Label(self.root, text="Ticket Number",font=("TkDefaultFont", 18))
+        self.IDlabel.grid(row=1, column=2,padx=10, pady=10)
+
+        self.ID = tk.StringVar()
+        self.IDNameEntry = tk.ttk.Entry(self.root,justify="center", width=5,font=("TkDefaultFont", 18), textvariable=self.ID)
+        self.IDNameEntry.grid(row=2,column=2,pady=0,padx=10)
+
+        # start a self.video_loop that constantly pools the video sensor
+        # for the most recently read frame
+        self.video_loop()
+
+    def setPinkScale(self, val1):
+        self.pinkSliderVal = val1
+
+    def setColourScale(self, val2):
+        self.colourSliderVal = val2
+
+    def video_loop(self):
+        if self.ID.get() is "":
+            self.btn.config(state="disabled")
+        else:
+            self.btn.config(state="enabled")
+
+        """ Get frame from the video stream and show it in Tkinter """
+        ok, frame = self.vs.read()  # read frame from video stream
+        if ok:  # frame captured without any errors
+            # cv2image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA)  # convert colors from BGR to RGBA
+
+            # set frame to be still from webcam feed
+            image = frame
+            # convert colour to Hue, Value, Saturation
+            hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+            self.imgGlobal = image
+            # find all values within the range given (pink on hue)
+            t = int(float(self.pinkSliderVal)) * 2
+
+            maskpink = cv2.inRange(hsv, (PINK_LOW + t, 100 + t, 100 + t), (PINK_HIGH + t, 220 + t, 250 + t))
+
+            # cv2.imshow("ok", maskpink)
+
+            # invert findings to only show pink bricks
+            imask = maskpink > 0
+            pink = np.zeros_like(frame, np.uint8)
+            pink[imask] = frame[imask]
+
+            # convert pink to greyscale and boolean
+            greyedImage = cv2.cvtColor(pink, cv2.COLOR_BGR2GRAY)
+            ret, thresh = cv2.threshold(greyedImage, 20, 125, 0)
+
+            # find all contours in image
+            im2, contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+
+            # keep a running total of all found centroids
+            runningcX, runningcY = [], []
+
+            for c in contours:
+                # calculate image moments
+                M = cv2.moments(c)
+
+                if cv2.contourArea(c) > 500:
+                    # print(cv2.contourArea(c))
+                    cX = int(M["m10"] / M["m00"])
+                    cY = int(M["m01"] / M["m00"])
+                    runningcX.append(cX)
+                    runningcY.append(cY)
+
+                    # Get HSV colour at specified pixel (Y GOES FIRST)
+                    centroidcolour = hsv[cY, cX]
+                    centroidcolour = ','.join(map(str, centroidcolour))
+
+                    # printstring = centroidcolour + "    " + str(cX) + "," + str(cY)
+
+                    # Debug add circle and text to show found lego centers
+                    cv2.circle(image, (cX, cY), 5, (255, 255, 255), -1)
+                    # cv2.putText(image, printstring, (cX - 25, cY - 25), cv2.FONT_HERSHEY_COMPLEX, 0.5, (255, 255, 255), 2)
+
+            # if we have found 4 pixels that are roughly in a square
+            if len(runningcX) == 4:
+                pairedXY = [(runningcX[0], runningcY[0]),
+                            (runningcX[1], runningcY[1]),
+                            (runningcX[2], runningcY[2]),
+                            (runningcX[3], runningcY[3])]
+
+                checkArray = spatial.distance.pdist(pairedXY)
+
+                # worthContinuing = False
+
+                # Check if it's worth continuing
+                if min(checkArray) > 300:
+                    sorted(pairedXY, key=itemgetter(1))
+
+                    # First two are top row, second two are bottom row
+                    if pairedXY[2][0] > pairedXY[3][0]:
+                        sortedXY = [pairedXY[3], pairedXY[2]]
+                    else:
+                        sortedXY = [pairedXY[2], pairedXY[3]]
+
+                    if pairedXY[0][0] > pairedXY[1][0]:
+                        sortedXY.extend([pairedXY[1], pairedXY[0]])
+                    else:
+                        sortedXY.extend([pairedXY[0], pairedXY[1]])
+
+                    xJump = sortedXY[2][1] - sortedXY[0][1]
+                    yJump = sortedXY[1][0] - sortedXY[0][0]
+
+                    # for y in range(1, 9):
+                    #    for x in range(1, 9):
+                    #        cv2.circle(image, (int(sortedXY[0][0] + (xJump * (x / 9))), int(sortedXY[0][1] + (yJump * (y / 9)))),
+                    #                   5, (255, 255, 255), -1)
+
+                    TopGap = sortedXY[1][0] - sortedXY[0][0]
+                    BotGap = sortedXY[3][0] - sortedXY[2][0]
+                    LeftGap = sortedXY[2][1] - sortedXY[0][1]
+                    RightGap = sortedXY[3][1] - sortedXY[1][1]
+                    TopMinor = sortedXY[1][1] - sortedXY[0][1]
+                    BotMinor = sortedXY[3][1] - sortedXY[2][1]
+                    LeftMinor = sortedXY[2][0] - sortedXY[0][0]
+                    RightMinor = sortedXY[3][0] - sortedXY[1][0]
+
+                    verLinesA = list()
+                    verLinesB = list()
+                    horLinesC = list()
+                    horLinesD = list()
+
+                    # Brute force this
+                    for y in range(0, 10):
+                        # does line AB and CD intersect
+                        A = (int(sortedXY[0][0] + (TopGap * (y / 9))), int(sortedXY[0][1] + (TopMinor * (y / 9))))
+                        B = (int(sortedXY[2][0] + (BotGap * (y / 9))), int(sortedXY[2][1] + (BotMinor * (y / 9))))
+                        C = (int(sortedXY[0][0] + (LeftMinor * (y / 9))), int(sortedXY[0][1] + (LeftGap * (y / 9))))
+                        D = (int(sortedXY[1][0] + (RightMinor * (y / 9))), int(sortedXY[1][1] + (RightGap * (y / 9))))
+                        verLinesA.append(A)
+                        verLinesB.append(B)
+                        horLinesC.append(C)
+                        horLinesD.append(D)
+
+                        if self.showLines is True:
+                            cv2.line(image, A, B, (255, 255, 255), 1)
+                            cv2.line(image, C, D, (255, 255, 255), 1)
+
+                    for counta in range(1, 9):
+                        for countc in range(1, 9):
+                            line1 = line(verLinesA[counta], verLinesB[counta])
+                            line2 = line(horLinesC[countc], horLinesD[countc])
+                            isgood = intersects(line1, line2)
+
+                            # Get colour from image map
+                            threecolour = image[int(isgood[1]), int(isgood[0])]
+
+                            # Convert to integers
+                            circleColour = int(threecolour[0]), int(threecolour[1]), int(threecolour[2])
+                            if self.showLines is False:
+                                cv2.circle(image, (int(isgood[0]), int(isgood[1])), 10, circleColour, -1, cv2.LINE_4)
+
+                            # Do it in HSV
+                            threecolourHSV = hsv[int(isgood[1]), int(isgood[0])]
+                            threecolourHSVstring = str(threecolourHSV[0])  # + " " + str(threecolourHSV[1])
+                            cOff = self.colourSliderVal
+                            cOff = int(float(cOff))
+                            testColour = threecolourHSV[0] + cOff
+                            stringToPrint = "NA"
+
+                            if threecolourHSV[1] < 100:
+                                stringToPrint = "NA"
+                            elif RED_LOW <= testColour <= RED_HIGH:
+                                stringToPrint = "Red"
+                            elif YELLOW_LOW <= testColour <= YELLOW_HIGH:
+                                stringToPrint = "Yellow"
+                            elif GREEN_LOW <= testColour <= GREEN_HIGH:
+                                stringToPrint = "Green"
+                            elif DARKGREENLOW <= testColour <= DARKGREENHIGH:
+                                stringToPrint = "DGreen"
+                            elif BLUE_LOW <= testColour <= BLUE_HIGH:
+                                stringToPrint = "Blue"
+                            elif PURPLE_LOW <= testColour <= PURPLE_HIGH:
+                                stringToPrint = "Purple"
+                            else:
+                                stringToPrint = "NA"
+
+                            if stringToPrint != "NA":
+                                cv2.putText(image, threecolourHSVstring, (int(isgood[0]), int(isgood[1])),
+                                            cv2.FONT_HERSHEY_COMPLEX,
+                                            0.3, (255, 255, 255), 1)
+                                cv2.putText(image, stringToPrint, (int(isgood[0] - 10), int(isgood[1]) + 10),
+                                            cv2.FONT_HERSHEY_COMPLEX, 0.3, (255, 255, 255), 1)
+
+                            thisCSVSnapshot[countc - 1][counta - 1] = stringToPrint
+
+        cv2image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA)
+        self.current_image = Image.fromarray(cv2image)  # convert image for PIL
+        imgtk = ImageTk.PhotoImage(image=self.current_image)  # convert image for tkinter
+        self.panel.imgtk = imgtk  # anchor imgtk so it does not be deleted by garbage-collector
+        self.panel.config(image=imgtk)  # show the image
+        self.root.after(10, self.video_loop)  # call the same function after 10 milliseconds
+
+    def take_snapshot(self):
+        tempID = str('{0:03}'.format(int(self.ID.get())))
+        tempCity = ""
+        if self.CityName.get()is "":
+            tempCity = "City"
+        else:
+            tempCity = self.CityName.get()
+
+        fileString = tempID + "_" + tempCity + "_csvfile_" + str(int(time.time()))
+
+        cv2.imwrite("D:\Perforce\CityBlocks\CityBlock\CityImages\\" + fileString + ".png",self.imgGlobal)
+
+        self.IDNameEntry.delete(0,'end')
+        self.cityNameEntry.delete(0,'end')
+        # save generated array to CSV
+        with open("D:\Perforce\CityBlocks\CityBlock\CityData\\" + fileString + ".csv", 'w') as csvfile:
+           writer = csv.writer(csvfile)
+           writer.writerows(thisCSVSnapshot)
+           csvfile.close()
+           print("csv saved")
+
+    def showLinesChanged(self):
+        self.showLines = not self.showLines
+
+    def destructor(self):
+        # Destroy the root object and release all resources
+        self.root.destroy()
+        self.vs.release()  # release web camera
+        cv2.destroyAllWindows()  # it is not mandatory in this application
+
+
+# start the app
+pba = Application()
+pba.root.mainloop()
